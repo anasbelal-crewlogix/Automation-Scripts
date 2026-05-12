@@ -1,8 +1,8 @@
 node_modules/
 logs/
 /artifacts/
-projects/cosmedics/artifacts/*
-!projects/cosmedics/artifacts/.gitkeep
+cosmedics/artifacts/*
+!cosmedics/artifacts/.gitkeep
 .env
 .env.*
 *.log

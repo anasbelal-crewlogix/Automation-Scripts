@@ -289,7 +289,7 @@ async function expectSubscriptionScreenOpened() {
 }
 
 async function dumpSubscriptionScreenArtifacts(tag = 'subscription') {
-  const artifactsDir = path.resolve(process.cwd(), 'artifacts');
+  const artifactsDir = path.join(__dirname, '..', 'artifacts');
   fs.mkdirSync(artifactsDir, { recursive: true });
   const ts = new Date().toISOString().replace(/[:.]/g, '-');
   const base = `cosmedics-${tag}-${ts}`;

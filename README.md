@@ -6,7 +6,7 @@ Monorepo for WebdriverIO + Appium automation. Each product has its own folder un
 
 | Path | Purpose |
 |------|---------|
-| `projects/cosmedics/` | Cosmedics Android specs (`specs/`), docs, and static UI dumps (`fixtures/`) |
+| `cosmedics/` | Cosmedics-only: Android specs (`specs/`), docs, fixtures, generated `artifacts/` |
 | `projects/crewlogix/` | Crewlogix Android specs |
 | `projects/microbiometer/` | Microbiometer Android specs |
 | `projects/android-generic/` | Android specs not tied to one branded folder |
@@ -28,4 +28,4 @@ npm install
 npm run wdio:android:cosmedics:signin:positive
 ```
 
-See `package.json` `scripts` for all entry points. Cosmedics-specific notes: `projects/cosmedics/README.md`.
+See `package.json` `scripts` for all entry points. Cosmedics-specific notes: `cosmedics/README.md`.

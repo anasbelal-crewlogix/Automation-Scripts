@@ -1,7 +1,7 @@
 exports.config = {
   runner: 'local',
   // Default Android suite: shared / multi-app specs only. Cosmedics lives under
-  // projects/cosmedics/specs and is run via package.json scripts (--spec) so each
+  // cosmedics/specs and is run via package.json scripts (--spec) so each
   // app keeps its own package/activity env.
   specs: [
     './projects/crewlogix/specs/**/*.js',
