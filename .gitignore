@@ -1,10 +1,12 @@
 node_modules/
 logs/
 /artifacts/
-cosmedics/artifacts/*
-!cosmedics/artifacts/.gitkeep
+cosmedics/appium/artifacts/*
+!cosmedics/appium/artifacts/.gitkeep
 .env
-.env.*
+.env.local
+.env.*.local
+!.env.example
 *.log
 
 # Ad-hoc device / window captures at repo root (not part of fixtures)
