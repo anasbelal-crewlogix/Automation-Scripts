@@ -2,7 +2,7 @@
 const { defineConfig, devices } = require('@playwright/test');
 
 /**
- * Cosmedics web tests — config lives next to tests under `cosmedics/playwright/`.
+ * Cosmedics web tests — config lives next to tests under `Cosmedics/playwright/`.
  * @see https://playwright.dev/docs/test-configuration
  */
 module.exports = defineConfig({

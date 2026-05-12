@@ -1,5 +1,5 @@
 {
-  "name": "appium",
+  "name": "automation-scripts",
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
@@ -11,17 +11,17 @@
     "wdio:android:crewlogix:negative": "set STEP_DELAY_MS=1000&& set POST_SUBMIT_WAIT_MS=3500&& wdio run ./wdio.android.conf.js --spec ./projects/crewlogix/specs/signin.crewlogix.negative.android.js",
     "wdio:android:microbiometer:negative": "set UDID=5bf59d26&& set DEVICE_NAME=5bf59d26&& set STEP_DELAY_MS=1000&& set POST_SUBMIT_WAIT_MS=3500&& set APP_PACKAGE=com.pes.microbiometer&& set APP_ACTIVITY=com.pes.microbiometer.MainActivity&& wdio run ./wdio.android.conf.js --spec ./projects/microbiometer/specs/signin.microbiometer.negative.android.js",
     "wdio:android:microbiometer:signup-otp": "set UDID=5bf59d26&& set DEVICE_NAME=5bf59d26&& set STEP_DELAY_MS=1000&& set OTP_TIMEOUT_MS=120000&& set OTP_POLL_INTERVAL_MS=5000&& set RESET_APP=false&& set APP_PACKAGE=com.pes.microbiometer&& set APP_ACTIVITY=com.pes.microbiometer.MainActivity&& wdio run ./wdio.android.conf.js --spec ./projects/microbiometer/specs/signup.microbiometer.otp.android.js",
-    "wdio:android:cosmedics:signin": "set APP_PACKAGE=com.cosmedicenteruser&& set APP_ACTIVITY=com.cosmedicenteruser.MainActivity&& wdio run ./wdio.android.conf.js --spec ./cosmedics/appium/specs/cosmedics.signin.spec.js",
-    "wdio:android:cosmedics:signin:positive": "set APP_PACKAGE=com.cosmedicenteruser&& set APP_ACTIVITY=com.cosmedicenteruser.MainActivity&& wdio run ./wdio.android.conf.js --spec ./cosmedics/appium/specs/cosmedics.signin.positive.spec.js",
-    "wdio:android:cosmedics:post": "set COSMEDICS_QUIET=1&& set COSMEDICS_LOCATION_LEAVE_MAX_MS=2000&& set APP_PACKAGE=com.cosmedicenteruser&& set APP_ACTIVITY=com.cosmedicenteruser.MainActivity&& wdio run ./wdio.android.conf.js --spec ./cosmedics/appium/specs/cosmedics.appium.test.js",
-    "wdio:android:cosmedics:subscription": "set COSMEDICS_QUIET=1&& set MOCHA_TIMEOUT_MS=420000&& set APP_PACKAGE=com.cosmedicenteruser&& set APP_ACTIVITY=com.cosmedicenteruser.MainActivity&& wdio run ./wdio.android.conf.js --spec ./cosmedics/appium/specs/cosmedics.subscription.spec.js",
+    "wdio:android:cosmedics:signin": "set APP_PACKAGE=com.cosmedicenteruser&& set APP_ACTIVITY=com.cosmedicenteruser.MainActivity&& wdio run ./wdio.android.conf.js --spec ./Cosmedics/appium/specs/cosmedics.signin.spec.js",
+    "wdio:android:cosmedics:signin:positive": "set APP_PACKAGE=com.cosmedicenteruser&& set APP_ACTIVITY=com.cosmedicenteruser.MainActivity&& wdio run ./wdio.android.conf.js --spec ./Cosmedics/appium/specs/cosmedics.signin.positive.spec.js",
+    "wdio:android:cosmedics:post": "set COSMEDICS_QUIET=1&& set COSMEDICS_LOCATION_LEAVE_MAX_MS=2000&& set APP_PACKAGE=com.cosmedicenteruser&& set APP_ACTIVITY=com.cosmedicenteruser.MainActivity&& wdio run ./wdio.android.conf.js --spec ./Cosmedics/appium/specs/cosmedics.appium.test.js",
+    "wdio:android:cosmedics:subscription": "set COSMEDICS_QUIET=1&& set MOCHA_TIMEOUT_MS=420000&& set APP_PACKAGE=com.cosmedicenteruser&& set APP_ACTIVITY=com.cosmedicenteruser.MainActivity&& wdio run ./wdio.android.conf.js --spec ./Cosmedics/appium/specs/cosmedics.subscription.spec.js",
     "wdio:android:cosmedics:subscription:reset": "set COSMEDICS_RESET_BEFORE_SUBSCRIPTION=1&& npm run wdio:android:cosmedics:subscription",
     "wdio:android:cosmedics:all": "npm run wdio:android:cosmedics:signin && npm run wdio:android:cosmedics:post && npm run wdio:android:cosmedics:subscription",
     "wdio:android:cosmedics:all:positive": "npm run wdio:android:cosmedics:signin:positive && npm run wdio:android:cosmedics:post && npm run wdio:android:cosmedics:subscription",
     "wdio:android:cosmedics:crawl": "npm run wdio:android:cosmedics:post",
-    "cosmedics:playwright:install": "npm install --prefix cosmedics/playwright",
-    "cosmedics:playwright:browsers": "npm run install:browsers --prefix cosmedics/playwright",
-    "cosmedics:playwright:test": "npm run test --prefix cosmedics/playwright"
+    "cosmedics:playwright:install": "npm install --prefix Cosmedics/playwright",
+    "cosmedics:playwright:browsers": "npm run install:browsers --prefix Cosmedics/playwright",
+    "cosmedics:playwright:test": "npm run test --prefix Cosmedics/playwright"
   },
   "keywords": [],
   "author": "",

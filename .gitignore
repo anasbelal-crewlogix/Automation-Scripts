@@ -1,8 +1,8 @@
 node_modules/
 logs/
 /artifacts/
-cosmedics/appium/artifacts/*
-!cosmedics/appium/artifacts/.gitkeep
+Cosmedics/appium/artifacts/*
+!Cosmedics/appium/artifacts/.gitkeep
 .env
 .env.local
 .env.*.local

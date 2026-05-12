@@ -6,7 +6,7 @@ Monorepo for WebdriverIO + Appium automation. Each product has its own folder un
 
 | Path | Purpose |
 |------|---------|
-| `cosmedics/` | Cosmedics product folder: **`appium/`** (mobile specs, fixtures, artifacts) and **`playwright/`** (web tests + Playwright config) |
+| `Cosmedics/` | Cosmedics product folder: **`appium/`** (mobile specs, fixtures, artifacts) and **`playwright/`** (web tests + Playwright config) |
 | `projects/crewlogix/` | Crewlogix Android specs |
 | `projects/microbiometer/` | Microbiometer Android specs |
 | `projects/android-generic/` | Android specs not tied to one branded folder |
@@ -28,4 +28,6 @@ npm install
 npm run wdio:android:cosmedics:signin:positive
 ```
 
-See `package.json` `scripts` for all entry points. Cosmedics mobile: `cosmedics/appium/README.md`. Cosmedics web: `cosmedics/playwright/README.md`.
+See `package.json` `scripts` for all entry points. Cosmedics mobile: `Cosmedics/appium/README.md`. Cosmedics web: `Cosmedics/playwright/README.md`.
+
+**Renaming the folder on disk:** If your repo still lives in `D:\Appium`, you can rename that folder to `Projects` in File Explorer after closing Cursor (the folder must not be in use). Git does not care about the parent folder name.

@@ -5,7 +5,7 @@
 From this folder:
 
 ```powershell
-cd cosmedics\playwright
+cd Cosmedics\playwright
 npm install
 npm run install:browsers
 ```
