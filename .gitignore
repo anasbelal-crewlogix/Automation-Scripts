@@ -1,6 +1,17 @@
 node_modules/
 logs/
-artifacts/
+/artifacts/
+projects/cosmedics/artifacts/*
+!projects/cosmedics/artifacts/.gitkeep
 .env
 .env.*
 *.log
+
+# Ad-hoc device / window captures at repo root (not part of fixtures)
+/current-screen.png
+/cursor_screen.png
+/latest-device-screen.png
+/otp-live-screen.png
+/otp-live-window-dump.xml
+/window_dump.xml
+/window_dump_new_device.xml
