@@ -1,5 +1,8 @@
 
 # Playwright
+# Local bundles/archives — not versioned (avoids noise + repo bloat)
+*.rar
+
 node_modules/
 /test-results/
 /playwright-report/
