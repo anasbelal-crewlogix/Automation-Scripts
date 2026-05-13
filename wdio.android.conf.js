@@ -1,3 +1,11 @@
+const fs = require('node:fs');
+const path = require('node:path');
+
+const logDir = path.join(__dirname, 'logs');
+if (!fs.existsSync(logDir)) {
+  fs.mkdirSync(logDir, { recursive: true });
+}
+
 exports.config = {
   runner: 'local',
   // Default Android suite: shared / multi-app specs only. Cosmedics lives under
@@ -20,7 +28,15 @@ exports.config = {
   connectionRetryTimeout: 120000,
   connectionRetryCount: 1,
   framework: 'mocha',
-  reporters: ['spec'],
+  reporters: [
+    'spec',
+    [
+      'json',
+      {
+        logFile: path.join(logDir, 'wdio-last-result.json'),
+      },
+    ],
+  ],
   mochaOpts: {
     ui: 'bdd',
     timeout: Number(process.env.MOCHA_TIMEOUT_MS || 120000),
