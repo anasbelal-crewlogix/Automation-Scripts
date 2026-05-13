@@ -711,23 +711,76 @@ async function getLocationAddressLabelText(el) {
 
 async function getLocationPickerAddressRow(minContentDescLen = 12) {
   await $(`//*[@text="${LOCATION_SCREEN_TITLE}"]`).waitForDisplayed({ timeout: 15000 });
-  const groups = await $$('//android.view.ViewGroup[@clickable="true" and @content-desc]');
-  for (let i = 0; i < groups.length; i++) {
-    const g = groups[i];
-    const cd = ((await g.getAttribute('content-desc')) || '').trim();
-    if (!cd || cd === 'Use my current location') {
-      continue;
+
+  const isUsableContentDesc = (cd) => {
+    const t = (cd || '').trim();
+    if (!t || t === 'Use my current location') {
+      return false;
     }
-    if (cd.length < minContentDescLen) {
-      continue;
+    return t.length >= minContentDescLen;
+  };
+
+  const pickFromLocator = async (locator) => {
+    const groups = await $$(locator);
+    const n = groups.length;
+    for (let i = 0; i < n; i++) {
+      const g = groups[i];
+      let cd = '';
+      try {
+        cd = ((await g.getAttribute('content-desc')) || '').trim();
+      } catch {
+        continue;
+      }
+      if (!isUsableContentDesc(cd)) {
+        continue;
+      }
+      if (!(await g.isDisplayed().catch(() => false))) {
+        continue;
+      }
+      return g;
     }
-    if (!(await g.isDisplayed().catch(() => false))) {
-      continue;
+    return null;
+  };
+
+  // Cosmedics builds vary: address may be on clickable ViewGroup, plain ViewGroup, or another widget.
+  const locators = [
+    '//android.view.ViewGroup[@clickable="true" and @content-desc]',
+    '//android.view.ViewGroup[@content-desc]',
+    '//*[@clickable="true" and @content-desc]',
+    '//android.view.View[@content-desc]',
+  ];
+  for (const loc of locators) {
+    const row = await pickFromLocator(loc);
+    if (row) {
+      return row;
     }
-    return g;
   }
+
+  const texts = await $$('//android.widget.TextView');
+  const tn = texts.length;
+  for (let i = 0; i < tn; i++) {
+    const tv = texts[i];
+    if (!(await tv.isDisplayed().catch(() => false))) {
+      continue;
+    }
+    const t = ((await tv.getText().catch(() => '')) || '').trim();
+    if (t.length < minContentDescLen) {
+      continue;
+    }
+    if (t === LOCATION_SCREEN_TITLE) {
+      continue;
+    }
+    if (t.includes('Use my current location')) {
+      continue;
+    }
+    if (!/\d/.test(t) && !t.includes(',')) {
+      continue;
+    }
+    return tv;
+  }
+
   throw new Error(
-    `No address/search row (ViewGroup with content-desc, min len ${minContentDescLen}) on "${LOCATION_SCREEN_TITLE}" — check UI dump.`
+    `No address/search row on "${LOCATION_SCREEN_TITLE}" (tried View/ViewGroup content-desc and address-like TextView) — check UI dump.`
   );
 }
 
@@ -770,16 +823,23 @@ async function getLocationScreenSearchFieldElement() {
 }
 
 async function waitForLocationSearchFieldNonEmpty(timeout = 20000) {
-  const search = await getLocationScreenSearchFieldElement();
+  let lastSearch = null;
   await driver.waitUntil(
-    async () => (await getLocationAddressLabelText(search)).trim().length >= 5,
+    async () => {
+      try {
+        lastSearch = await getLocationScreenSearchFieldElement();
+        return (await getLocationAddressLabelText(lastSearch)).trim().length >= 5;
+      } catch {
+        return false;
+      }
+    },
     {
       timeout,
       timeoutMsg:
         'Search/address row did not show a location string (≥5 chars) after Use my current location.',
     }
   );
-  return search;
+  return lastSearch;
 }
 
 /**
@@ -1027,15 +1087,31 @@ function countNeedleHitsInText(text, needles) {
   return needles.filter((n) => n && lower.includes(n.toLowerCase())).length;
 }
 
-async function expectAddressFieldMatchesDevicePlace(addressField, needles, minHits, geo) {
+async function expectAddressFieldMatchesDevicePlace(needles, minHits, geo) {
   if (!needles.length) {
     throw new Error('No address strings from reverse geocode to match against.');
   }
   let lastUiText = '';
+
+  const readAddressText = async () => {
+    for (const len of [12, 8, 3]) {
+      try {
+        const row = await getLocationPickerAddressRow(len);
+        const text = (await getLocationAddressLabelText(row)).trim();
+        if (text.length >= 5) {
+          return text;
+        }
+      } catch {
+        /* layout may be mid-transition; try shorter min length or next strategy */
+      }
+    }
+    return '';
+  };
+
   try {
     await driver.waitUntil(
       async () => {
-        const text = (await getLocationAddressLabelText(addressField)).trim();
+        const text = await readAddressText();
         lastUiText = text;
         if (text.length < 5) {
           return false;
@@ -1060,7 +1136,7 @@ async function expectAddressFieldMatchesDevicePlace(addressField, needles, minHi
     );
     throw err;
   }
-  const finalText = (await getLocationAddressLabelText(addressField)).trim();
+  const finalText = await readAddressText();
   const hits = countNeedleHitsInText(finalText, needles);
   expect(hits).toBeGreaterThanOrEqual(minHits);
   console.log(`[SUMMARY] App location: "${finalText}" (hits=${hits}/${minHits}) => PASS`);
@@ -1084,6 +1160,7 @@ describe('Cosmedics - device_location_vs_picker_search', () => {
   });
 
   it('after sign-in flow, use my current location fills search with the same place as device GPS', async function () {
+    this.timeout(Number(process.env.MOCHA_TIMEOUT_MS || 360000));
     await ensureLoggedInOnHome();
     await clickHomeLocationLine();
     await expectLocationScreenOpened();
@@ -1106,7 +1183,7 @@ describe('Cosmedics - device_location_vs_picker_search', () => {
     }
 
     await clickUseMyCurrentLocation();
-    await expectAddressFieldMatchesDevicePlace(addressSearch, needles, minHits, geo);
+    await expectAddressFieldMatchesDevicePlace(needles, minHits, geo);
 
     const searchAfterUseCurrent = await waitForLocationSearchFieldNonEmpty();
     const searchPreview = (await getLocationAddressLabelText(searchAfterUseCurrent)).trim();

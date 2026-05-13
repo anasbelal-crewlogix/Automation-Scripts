@@ -448,30 +448,30 @@ async function expectSubscriptionStillVisible() {
 }
 
 async function getPlansCarouselRect() {
-  // There are multiple HorizontalScrollViews: first is tabs, second is the plans carousel.
+  // There are multiple HorizontalScrollViews on many builds (tabs + plans). Some tabs use only
+  // RecyclerView / ViewPager2 — then fall back to a central swipe band.
   const hsvs = await $$('//android.widget.HorizontalScrollView');
-  if (!hsvs.length) {
-    throw new Error('No HorizontalScrollView found (expected tabs + plans carousel).');
-  }
   const { width: winW, height: winH } = await driver.getWindowSize();
 
-  // Pick the largest visible HSV below the header (y > ~250).
-  let best = null;
-  for (const el of hsvs) {
-    if (!(await el.isDisplayed().catch(() => false))) continue;
-    const loc = await el.getLocation().catch(() => null);
-    const size = await el.getSize().catch(() => null);
-    if (!loc || !size) continue;
-    if (!Number.isFinite(loc.y) || !Number.isFinite(size.width) || !Number.isFinite(size.height)) continue;
-    if (loc.y < 250) continue;
-    const area = size.width * size.height;
-    if (!best || area > best.area) {
-      best = { x: loc.x, y: loc.y, width: size.width, height: size.height, area };
+  if (hsvs.length) {
+    let best = null;
+    for (const el of hsvs) {
+      if (!(await el.isDisplayed().catch(() => false))) continue;
+      const loc = await el.getLocation().catch(() => null);
+      const size = await el.getSize().catch(() => null);
+      if (!loc || !size) continue;
+      if (!Number.isFinite(loc.y) || !Number.isFinite(size.width) || !Number.isFinite(size.height)) continue;
+      if (loc.y < 250) continue;
+      const area = size.width * size.height;
+      if (!best || area > best.area) {
+        best = { x: loc.x, y: loc.y, width: size.width, height: size.height, area };
+      }
+    }
+    if (best) {
+      return { x: best.x, y: best.y, width: best.width, height: best.height };
     }
   }
 
-  if (best) return best;
-  // Fallback to a reasonable region in the middle of the screen.
   return {
     x: Math.round(winW * 0.05),
     y: Math.round(winH * 0.25),
@@ -683,6 +683,102 @@ async function verifyQrTopPlanIs(expectedPlanSubstring) {
   }
 }
 
+async function isLogoutRowVisibleQuick() {
+  return $('//*[@text="Logout"]').isDisplayed().catch(() => false);
+}
+
+/**
+ * From QR / subscription / payment stack, go back until Profile shows the Logout row (or open Profile from Home).
+ */
+async function navigateBackUntilLogoutVisible(maxBack = 15) {
+  for (let i = 0; i < maxBack; i++) {
+    if (await isLogoutRowVisibleQuick()) {
+      return;
+    }
+    await driver.pressKeyCode(4);
+    await driver.pause(450);
+  }
+  if (await isHomeScreenVisibleQuick()) {
+    await clickHomeBottomNavProfile();
+    await driver.waitUntil(() => isLogoutRowVisibleQuick(), {
+      timeout: 20000,
+      interval: 300,
+      timeoutMsg: 'Logout row not visible after opening Profile from Home.',
+    });
+    return;
+  }
+  throw new Error('Could not reach Profile (Logout row) for sign-out.');
+}
+
+async function clickLogoutRow() {
+  const candidates = [
+    '//*[@text="Logout"]',
+    '//*[contains(@text,"Logout")]',
+    '//*[@content-desc="Logout"]',
+    '//*[contains(@content-desc,"Logout")]',
+  ];
+  for (const xp of candidates) {
+    const el = await $(xp);
+    if (await el.isDisplayed().catch(() => false)) {
+      await el.click();
+      return;
+    }
+  }
+  throw new Error(`Logout control not found. Tried: ${candidates.join(' | ')}`);
+}
+
+async function confirmLogoutDialogYes(timeout = 15000) {
+  await driver.waitUntil(
+    async () => {
+      const yesXpaths = [
+        '//*[@text="Yes"]',
+        '//*[@text="YES"]',
+        '//*[contains(@text,"Yes")]',
+        '//android.widget.Button[@text="Yes"]',
+      ];
+      for (const xp of yesXpaths) {
+        const el = await $(xp);
+        if (await el.isDisplayed().catch(() => false)) {
+          await el.click();
+          return true;
+        }
+      }
+      const btn1 = await $('//*[@resource-id="android:id/button1"]');
+      if (await btn1.isDisplayed().catch(() => false)) {
+        const t = ((await btn1.getText().catch(() => '')) || '').trim();
+        if (/^yes$/i.test(t)) {
+          await btn1.click();
+          return true;
+        }
+      }
+      return false;
+    },
+    {
+      timeout,
+      interval: 250,
+      timeoutMsg: 'Logout confirmation dialog: "Yes" not found.',
+    }
+  );
+}
+
+async function expectSignInScreenAfterLogout(timeout = 20000) {
+  const signIn = await getSignInTitle();
+  await signIn.waitForDisplayed({ timeout });
+}
+
+/**
+ * After subscription / QR flow: return to Profile, Logout, confirm Yes, expect Sign In.
+ */
+async function completeProfileLogoutWithConfirm() {
+  console.log('[SUMMARY] Navigate to Profile and sign out (confirm Yes)');
+  await navigateBackUntilLogoutVisible();
+  await clickLogoutRow();
+  await confirmLogoutDialogYes();
+  await driver.pause(500);
+  await expectSignInScreenAfterLogout();
+  console.log('[SUMMARY] Logout complete — Sign In visible');
+}
+
 async function navigateBackToSubscriptionOrProfile(maxBack = 8) {
   for (let i = 0; i < maxBack; i++) {
     if (await $('//*[@text="Subscription"]').isDisplayed().catch(() => false)) return 'subscription';
@@ -827,6 +923,7 @@ describe('Cosmedics - Profile subscription plan', () => {
         if (res.action === 'paid' || res.action === 'success') {
           await dumpSubscriptionScreenArtifacts('qr-code-screen');
           console.log('[SUMMARY] Stopping after QR Code verification => PASS');
+          await completeProfileLogoutWithConfirm();
           return;
         }
       }
@@ -839,6 +936,7 @@ describe('Cosmedics - Profile subscription plan', () => {
 
     await dumpSubscriptionScreenArtifacts('subscription-final');
     console.log('[SUMMARY] Subscription multi-tab selection flow => PASS');
+    await completeProfileLogoutWithConfirm();
   });
 });
 
