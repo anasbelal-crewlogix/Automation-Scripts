@@ -85,16 +85,34 @@ function formatDurationHuman(secondsStr) {
   return `${m} min ${s} sec`;
 }
 
-function getRunTitle(label, cmdLine) {
+/**
+ * Generic Slack header — same whether zero or many test cases failed (status lives in the body).
+ */
+function getReportHeading(label, cmdLine) {
   const hay = `${label} ${cmdLine}`.toLowerCase();
-  if (hay.includes('all-positive') || hay.includes('all:positive')) return 'Cosmedics — full patient flow (chained run)';
-  if (hay.includes('cosmedics:all') && !hay.includes('all-positive')) return 'Cosmedics — full patient flow (chained run)';
-  if (hay.includes('subscription') && !hay.includes('provider')) return 'Cosmedics — subscription';
-  if (hay.includes('provider')) return 'Cosmedics — provider access';
-  if (hay.includes('signin:positive')) return 'Cosmedics — patient sign-in (happy path)';
-  if (hay.includes('cosmedics:post') || hay.includes('appium.test')) return 'Cosmedics — location';
-  if (hay.includes('signin') && !hay.includes('positive')) return 'Cosmedics — patient sign-in (checks)';
-  return label.replace(/-/g, ' ');
+  if (hay.includes('all-positive') || hay.includes('all:positive')) {
+    return 'Cosmedics Full Patient Flow Automation Testing Report';
+  }
+  if (hay.includes('cosmedics:all') && !hay.includes('all-positive')) {
+    return 'Cosmedics Full Patient Flow Automation Testing Report';
+  }
+  if (hay.includes('subscription') && !hay.includes('provider')) {
+    return 'Cosmedics Subscription Automation Testing Report';
+  }
+  if (hay.includes('provider')) {
+    return 'Cosmedics Provider Access Automation Testing Report';
+  }
+  if (hay.includes('signin:positive')) {
+    return 'Cosmedics Patient Sign-in Automation Testing Report';
+  }
+  if (hay.includes('cosmedics:post') || hay.includes('appium.test')) {
+    return 'Cosmedics Location Automation Testing Report';
+  }
+  if (hay.includes('signin') && !hay.includes('positive')) {
+    return 'Cosmedics Patient Sign-in Automation Testing Report';
+  }
+  const t = label.replace(/-/g, ' ').trim();
+  return t ? `${t} Automation Testing Report` : 'Automation Testing Report';
 }
 
 /**
@@ -165,6 +183,16 @@ function getHappyFlowBullets(cmdLine, label) {
       'Tap Continue and confirm you successfully leave the sign-in screen.',
     ];
   }
+  if (hay.includes('signin') && !hay.includes('provider') && !hay.includes('positive')) {
+    return [
+      'Open the patient Sign In screen (clear app if a previous session left you on Home).',
+      'Continue stays disabled when email, password, or both are missing.',
+      'Wrong credentials or wrong password with valid email keep you on Sign In after Continue.',
+      'Malformed or whitespace-only inputs do not complete sign-in (or Continue stays off).',
+      'Provider access entry is visible on the patient sign-in screen.',
+      'Valid email and password: Continue enables, then login leaves the Sign In screen.',
+    ];
+  }
   return [
     'Run the configured automation against the connected device.',
     'Wait until the script finishes.',
@@ -189,7 +217,7 @@ function stateRank(state) {
 
 function humanizeTestLine(name) {
   const t = (name || '').trim();
-  if (!t) return 'Unnamed check';
+  if (!t) return 'Unnamed test case';
   return t.charAt(0).toUpperCase() + t.slice(1);
 }
 
@@ -246,34 +274,58 @@ function ensureLogsDir() {
   }
 }
 
-function buildSlackPayload({ passed, title, durationHuman, durationSec, reportMode, chained, tests, bullets, exitCode }) {
-  const resultEmoji = passed ? ':white_check_mark:' : ':x:';
-  const resultWord = passed ? 'Success' : 'Failed';
-
+function buildSlackPayload({
+  passed,
+  reportHeading,
+  durationHuman,
+  durationSec,
+  reportMode,
+  chained,
+  tests,
+  bullets,
+  exitCode,
+}) {
   let body = '';
+
   if (reportMode === 'tests' && tests.length) {
-    body += '*These automated checks were run:*\n\n';
+    const s = summarizeTests(tests);
+    if (passed) {
+      body += `*Run result:* :white_check_mark: All *${s.total}* recorded test case(s) passed.\n\n`;
+    } else {
+      body += `*Run result:* :x: *${s.failed}* of *${s.total}* recorded test case(s) did not pass (*${s.passed}* passed`;
+      if (s.skipped) body += `, *${s.skipped}* skipped`;
+      if (s.pending) body += `, *${s.pending}* pending`;
+      body += ').\n\n';
+    }
+
+    body += '*Test case results:*\n\n';
     for (const t of tests) {
       const line = humanizeTestLine(t.name);
       const st = stateToEnglish(t.state);
       body += `• ${line} => *${st}*\n`;
     }
-    const s = summarizeTests(tests);
     body += '\n*Summary*\n';
-    body += `• Total checks recorded: *${s.total}*\n`;
+    body += `• Total test cases recorded: *${s.total}*\n`;
     body += `• Passed: *${s.passed}* · Failed: *${s.failed}* · Skipped: *${s.skipped}*`;
     if (s.pending) body += ` · Pending: *${s.pending}*`;
     body += '\n';
-    body += `\n*Overall run:* ${passed ? 'The automation finished with *no failing checks*.' : 'At least one check *did not pass* — review the run on the machine or in CI.'}`;
+    body += `\n*Overall:* ${
+      passed
+        ? 'Every recorded test case passed.'
+        : 'At least one test case did not pass — review the failed line(s) above and the terminal or CI job log for details.'
+    }`;
   } else {
+    body += passed
+      ? '*Run result:* :white_check_mark: The automation completed successfully (exit code 0).\n\n'
+      : '*Run result:* :x: The automation did not complete successfully.\n\n';
     body += '*Happy path — these steps were followed:*\n\n';
     for (const b of bullets) {
       body += `• ${b}\n`;
     }
     body += '\n*Summary*\n';
     body += passed
-      ? '• The full script finished *successfully* (exit code 0). All steps in this flow completed without a hard stop from the tool.'
-      : '• The script *did not finish successfully*. A step failed or timed out — please open the terminal log on the computer that ran the test.';
+      ? '• *Overall:* The run finished without a failing exit code; all described steps completed from the tool\'s perspective.'
+      : '• *Overall:* A step failed or timed out — open the terminal or CI log on the machine that ran the test.';
     if (chained) {
       body += '\n• _This job chains several test runs in one command; the bullets describe the full journey._';
     }
@@ -281,12 +333,20 @@ function buildSlackPayload({ passed, title, durationHuman, durationSec, reportMo
 
   body += `\n\n*Time:* ${durationHuman} (${durationSec} seconds)`;
 
-  const mobileFallback = `${resultEmoji} ${resultWord}: ${title}. ${passed ? 'Run completed successfully.' : 'Run failed — see details in Slack.'}`;
+  const mobileFallback = (() => {
+    if (reportMode === 'tests' && tests.length) {
+      const s = summarizeTests(tests);
+      return passed
+        ? `${reportHeading} — All ${s.total} test case(s) passed.`
+        : `${reportHeading} — ${s.failed} of ${s.total} test case(s) failed.`;
+    }
+    return passed ? `${reportHeading} — Completed successfully.` : `${reportHeading} — Run failed.`;
+  })();
 
   const blocks = [
     {
       type: 'header',
-      text: { type: 'plain_text', text: `${resultEmoji} ${resultWord} — ${title}`, emoji: true },
+      text: { type: 'plain_text', text: reportHeading, emoji: false },
     },
     {
       type: 'section',
@@ -364,7 +424,7 @@ if (passed && !notifyOnSuccess) {
   process.exit(exitCode);
 }
 
-const title = getRunTitle(label, cmdLine);
+const reportHeading = getReportHeading(label, cmdLine);
 const durationHuman = formatDurationHuman(durationSec);
 
 let mode = 'happy';
@@ -390,7 +450,7 @@ if (!useHappyFlowNarrativeOnly(cmdLine, label)) {
 
 const payload = buildSlackPayload({
   passed,
-  title,
+  reportHeading,
   durationHuman,
   durationSec,
   reportMode: mode === 'tests' ? 'tests' : 'happy',

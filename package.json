@@ -23,6 +23,8 @@
     "wdio:slack:subscription": "node scripts/wdio-slack-report.mjs --label Cosmedics-subscription -- npm run wdio:android:cosmedics:subscription",
     "wdio:slack:all-positive": "node scripts/wdio-slack-report.mjs --label Cosmedics-all-positive -- npm run wdio:android:cosmedics:all:positive",
     "wdio:slack:provider": "node scripts/wdio-slack-report.mjs --label Cosmedics-provider-signin -- npm run wdio:android:cosmedics:provider:signin",
+    "wdio:slack:signin": "node scripts/wdio-slack-report.mjs --label Cosmedics-signin -- npm run wdio:android:cosmedics:signin",
+    "wdio:slack:signin:positive": "node scripts/wdio-slack-report.mjs --label Cosmedics-signin-positive -- npm run wdio:android:cosmedics:signin:positive",
     "cosmedics:playwright:install": "npm install --prefix Cosmedics/playwright",
     "cosmedics:playwright:browsers": "npm run install:browsers --prefix Cosmedics/playwright",
     "cosmedics:playwright:test": "npm run test --prefix Cosmedics/playwright"
