@@ -1,24 +1,119 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
+
 /**
- * Provider flow: start on the patient Sign In screen (e.g. after patient logout),
- * open Provider access, reach Provider login.
+ * Provider flow: patient Sign In → Provider access → Provider login → submit credentials
+ * → optional clinic selection (multi-clinic accounts only) → post-login wait.
  *
- * Run after patient logout or with app cleared to Sign In:
+ * Run:
  *   npm run wdio:android:cosmedics:provider:signin
  *
- * Optional: set COSMEDICS_PROVIDER_EMAIL + COSMEDICS_PROVIDER_PASSWORD to fill fields
- * and tap Continue (does not assert post-login yet).
+ * Credentials default to the shared Mailinator test provider unless overridden:
+ *   COSMEDICS_PROVIDER_EMAIL / COSMEDICS_PROVIDER_PASSWORD
  *
- * If labels differ by build, set:
- *   COSMEDICS_PROVIDER_ACCESS_TEXT — exact or partial label for the link below Continue
- *   COSMEDICS_PROVIDER_LOGIN_MARKER — substring that appears on Provider login only
+ * Multi-clinic: a bottom sheet titled **Choose your clinic** lists options with **radio circles**
+ * (tapping the clinic name does not select). The script taps a **random** visible radio, then **Apply**.
+ * Detection: first XPath on title text / content-desc; if that misses (some Flutter UIs), a throttled
+ * `getPageSource` check for "choose your clinic" plus a bottom **Apply** and a selection control.
+ * Optional: COSMEDICS_PROVIDER_CLINIC_NAME — substring of clinic name; selects the radio on that row (same Y band).
+ *
+ * Optional UI tuning:
+ *   COSMEDICS_PROVIDER_ACCESS_TEXT — link below patient Continue
+ *   COSMEDICS_PROVIDER_LOGIN_MARKER — substring unique to provider login
+ *   COSMEDICS_CLINIC_SCREEN_MARKER — substring on clinic sheet if title differs from defaults
+ *   COSMEDICS_CLINIC_RADIO_MIN_X_FRACTION — 0–1, min X for “circle on the right” fallback (default 0.52)
+ *   COSMEDICS_PROVIDER_POST_LOGIN_PAUSE_MS — max settle pause after clinic sheet appears (default 2500, capped in flow)
+ *   COSMEDICS_CLINIC_SCREEN_WAIT_MS — max time to poll for clinic sheet after login (default 20000)
  */
 
 const APP_PACKAGE = 'com.cosmedicenteruser';
 
-const PROVIDER_EMAIL = (process.env.COSMEDICS_PROVIDER_EMAIL || '').trim();
-const PROVIDER_PASSWORD = (process.env.COSMEDICS_PROVIDER_PASSWORD || '').trim();
+const DEFAULT_PROVIDER_EMAIL = 'providertwo@mailinator.com';
+const DEFAULT_PROVIDER_PASSWORD = 'Password123';
+
+const PROVIDER_EMAIL = (process.env.COSMEDICS_PROVIDER_EMAIL || DEFAULT_PROVIDER_EMAIL).trim();
+const PROVIDER_PASSWORD = (process.env.COSMEDICS_PROVIDER_PASSWORD || DEFAULT_PROVIDER_PASSWORD).trim();
+
+const CLINIC_RADIO_MIN_X_FRACTION = Math.min(
+  0.85,
+  Math.max(0.42, Number(process.env.COSMEDICS_CLINIC_RADIO_MIN_X_FRACTION || 0.52))
+);
+const CLINIC_SCREEN_WAIT_MS = Number(process.env.COSMEDICS_CLINIC_SCREEN_WAIT_MS || 20000);
+const POST_LOGIN_PAUSE_MS = Number(process.env.COSMEDICS_PROVIDER_POST_LOGIN_PAUSE_MS || 2500);
+
+/** Throttle: page source is heavy; used when XPath cannot see the title (e.g. some Flutter layers). */
+let clinicChooserPageSourceCache = { at: 0, text: '' };
+
+async function hierarchyLikelyContainsClinicChooserTitle() {
+  const now = Date.now();
+  if (now - clinicChooserPageSourceCache.at < 2000 && clinicChooserPageSourceCache.text) {
+    return clinicChooserPageSourceCache.text.includes('choose your clinic');
+  }
+  clinicChooserPageSourceCache.at = now;
+  try {
+    clinicChooserPageSourceCache.text = (await driver.getPageSource()).toLowerCase();
+    return clinicChooserPageSourceCache.text.includes('choose your clinic');
+  } catch {
+    clinicChooserPageSourceCache.text = '';
+    return false;
+  }
+}
+
+function invalidateClinicChooserPageSourceCache() {
+  clinicChooserPageSourceCache = { at: 0, text: '' };
+}
+
+async function safeElementRect(el) {
+  if (!el) return null;
+  try {
+    if (typeof el.getRect === 'function') {
+      const r = await el.getRect();
+      if (r && Number.isFinite(r.width) && Number.isFinite(r.height)) return r;
+    }
+  } catch {
+    /* */
+  }
+  try {
+    if (typeof el.getLocation === 'function' && typeof el.getSize === 'function') {
+      const loc = await el.getLocation();
+      const size = await el.getSize();
+      return {
+        x: loc.x,
+        y: loc.y,
+        width: size.width,
+        height: size.height,
+      };
+    }
+  } catch {
+    /* */
+  }
+  return null;
+}
+
+async function dumpProviderUiArtifacts(tag) {
+  const dir = path.join(__dirname, '..', 'artifacts');
+  fs.mkdirSync(dir, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const base = `provider-${tag}-${stamp}`;
+  const xmlPath = path.join(dir, `${base}.xml`);
+  try {
+    const xml = await driver.getPageSource();
+    fs.writeFileSync(xmlPath, xml, 'utf8');
+    console.log(`[SUMMARY] Saved UI dump: ${xmlPath}`);
+  } catch (e) {
+    console.log(`[SUMMARY] Could not save page source: ${e.message}`);
+  }
+  try {
+    const pngPath = path.join(dir, `${base}.png`);
+    await driver.saveScreenshot(pngPath);
+    console.log(`[SUMMARY] Saved screenshot: ${pngPath}`);
+  } catch {
+    /* optional */
+  }
+  return xmlPath;
+}
 
 async function getPatientSignInTitle() {
   const selectors = [
@@ -241,6 +336,17 @@ async function getProviderPasswordInput() {
   throw new Error('Provider password field not found.');
 }
 
+async function countVisibleEditTexts() {
+  const edits = await $$('//android.widget.EditText');
+  let n = 0;
+  for (let i = 0; i < edits.length; i++) {
+    if (await edits[i].isDisplayed().catch(() => false)) {
+      n++;
+    }
+  }
+  return n;
+}
+
 async function clearAndType(element, value) {
   await element.click();
   await element.clearValue();
@@ -277,9 +383,477 @@ async function tapProviderContinue() {
   throw new Error(`Provider Continue not found. Tried: ${candidates.join(' | ')}`);
 }
 
+function clinicScreenTitleCandidates() {
+  const custom = (process.env.COSMEDICS_CLINIC_SCREEN_MARKER || '').trim();
+  const base = [
+    custom,
+    'Choose your clinic',
+    'Choose Your Clinic',
+    'Select clinic',
+    'Select a clinic',
+    'Select Clinic',
+    'Choose clinic',
+    'Choose Clinic',
+    'Clinic selection',
+    'Clinic Selection',
+    'Your clinics',
+    'Your Clinics',
+    'Select your clinic',
+    'Which clinic',
+    'Pick a clinic',
+    'Select location',
+    'Choose location',
+  ].filter(Boolean);
+  return [...new Set(base)];
+}
+
+/**
+ * Primary: title in accessibility tree (@text / @content-desc).
+ * Fallback: **Apply** in the lower part of the screen + hierarchy string contains "choose your clinic"
+ * (covers cases where the title is drawn but not exposed as a TextView), + not still on 2-field login,
+ * + at least one **clinic row title inside the chooser ScrollView** (not dashboard lists).
+ */
+async function isClinicSelectionScreenVisible() {
+  for (const phrase of clinicScreenTitleCandidates()) {
+    if (!phrase) continue;
+    const el = await $(`//*[contains(@text,"${phrase}")]`);
+    if (await el.isDisplayed().catch(() => false)) {
+      return true;
+    }
+    const cd = await $(`//*[contains(@content-desc,"${phrase}")]`);
+    if (await cd.isDisplayed().catch(() => false)) {
+      return true;
+    }
+  }
+
+  const applyCandidates = [
+    await $('//*[@text="Apply"]'),
+    await $('//*[@text="APPLY"]'),
+    await $('//*[contains(@text,"Apply")]'),
+  ];
+  let applyEl = null;
+  for (const a of applyCandidates) {
+    if (await a.isDisplayed().catch(() => false)) {
+      applyEl = a;
+      break;
+    }
+  }
+  if (!applyEl) {
+    return false;
+  }
+
+  const ar = await safeElementRect(applyEl);
+  if (!ar) {
+    return false;
+  }
+  const { height: sh } = await driver.getWindowSize();
+  if (ar.y < sh * 0.38) {
+    return false;
+  }
+
+  if ((await countVisibleEditTexts()) >= 2) {
+    return false;
+  }
+
+  if (!(await hierarchyLikelyContainsClinicChooserTitle())) {
+    return false;
+  }
+
+  const rowTitles = await collectClinicRowTitleElementsInSheet();
+  return rowTitles.length >= 1;
+}
+
+async function waitLeavingProviderLoginOrClinicAppears(timeoutMs = 60000) {
+  await driver.waitUntil(
+    async () => {
+      if (await isClinicSelectionScreenVisible()) {
+        return true;
+      }
+      const n = await countVisibleEditTexts();
+      return n < 2;
+    },
+    {
+      timeout: timeoutMs,
+      interval: 400,
+      timeoutMsg:
+        'After provider Continue: expected clinic selection or leaving the two-field login (still on login?).',
+    }
+  );
+}
+
+async function tapFirstMatchingButton(labels, maxWaitMs = 6000) {
+  const end = Date.now() + maxWaitMs;
+  while (Date.now() < end) {
+    for (const label of labels) {
+      const xps = [
+        `//*[@text="${label}"]`,
+        `//*[contains(@text,"${label}")]`,
+        `//*[@content-desc="${label}"]`,
+      ];
+      for (const xp of xps) {
+        const el = await $(xp);
+        if (await el.isDisplayed().catch(() => false)) {
+          const en = await el.isEnabled().catch(() => true);
+          if (en) {
+            await el.click();
+            return label;
+          }
+        }
+      }
+    }
+    await driver.pause(250);
+  }
+  return null;
+}
+
+/** Apply is often on a clickable ViewGroup with content-desc; inner TextView is not clickable. */
+async function tapClinicSheetApplyButton() {
+  const byDesc = await $('//*[@clickable="true" and (@content-desc="Apply" or @content-desc="APPLY")]');
+  if (await byDesc.isDisplayed().catch(() => false)) {
+    await byDesc.click();
+    return true;
+  }
+  const fromText = await $('//android.widget.TextView[@text="Apply" or @text="APPLY"]');
+  if (await fromText.isDisplayed().catch(() => false)) {
+    const anc = await fromText.$('./ancestor::*[@clickable="true"][1]');
+    if (await anc.isDisplayed().catch(() => false)) {
+      await anc.click();
+      return true;
+    }
+  }
+  return false;
+}
+
+function clinicRowTitleHeuristic(text) {
+  const t = (text || '').trim();
+  if (t.length < 3 || t.length > 100) return false;
+  if (/choose your clinic/i.test(t)) return false;
+  if (/^apply$/i.test(t)) return false;
+  if (t.includes('\n')) return false;
+  if (/\d{5,}/.test(t)) return false;
+  if (/,/.test(t)) return false;
+  return true;
+}
+
+/**
+ * Only titles under the clinic **modal** ScrollView (sibling of "Choose your clinic").
+ * Avoids matching clinic names on the provider dashboard after the sheet closes.
+ */
+async function collectClinicRowTitleElementsInSheet() {
+  const custom = (process.env.COSMEDICS_CLINIC_SCREEN_MARKER || '').trim();
+  const scopedXpaths = [];
+  if (custom) {
+    scopedXpaths.push(
+      `//*[contains(@text,"${custom}")]/following-sibling::android.widget.ScrollView//android.widget.TextView`
+    );
+  }
+  scopedXpaths.push(
+    '//*[@text="Choose your clinic"]/following-sibling::android.widget.ScrollView//android.widget.TextView',
+    '//*[contains(@text,"Choose your clinic")]/following-sibling::android.widget.ScrollView//android.widget.TextView'
+  );
+
+  const out = [];
+  for (const xp of scopedXpaths) {
+    const nodes = await $$(xp);
+    for (let i = 0; i < nodes.length; i++) {
+      const tv = nodes[i];
+      if (!(await tv.isDisplayed().catch(() => false))) continue;
+      const t = ((await tv.getText().catch(() => '')) || '').trim();
+      if (!clinicRowTitleHeuristic(t)) continue;
+      out.push(tv);
+    }
+    if (out.length) {
+      return out;
+    }
+  }
+  return out;
+}
+
+async function tapAtScreenCoords(x, y) {
+  await driver.performActions([
+    {
+      type: 'pointer',
+      id: 'clinicCoord',
+      parameters: { pointerType: 'touch' },
+      actions: [
+        { type: 'pointerMove', duration: 0, x: Math.round(x), y: Math.round(y) },
+        { type: 'pointerDown', button: 0 },
+        { type: 'pointerUp', button: 0 },
+      ],
+    },
+  ]);
+  await driver.releaseActions();
+}
+
+/**
+ * Cosmedics clinic sheet draws circles without RadioButton nodes — tap right of the title row.
+ */
+async function tapClinicSelectionDotToRightOfTitleTextView(tv) {
+  const r = await safeElementRect(tv);
+  if (!r) return false;
+  const { width: sw } = await driver.getWindowSize();
+  const tapX = Math.round((r.x + r.width + sw - 32) / 2);
+  const tapY = Math.round(r.y + r.height / 2);
+  await tapAtScreenCoords(tapX, tapY);
+  console.log(`[SUMMARY] Tapped selection area right of clinic title (x=${tapX}, y=${tapY}).`);
+  return true;
+}
+
+async function tapRandomClinicRowCoordinateFallback() {
+  const titles = await collectClinicRowTitleElementsInSheet();
+  if (!titles.length) {
+    console.log('[SUMMARY] Coordinate fallback: no clinic title TextViews passed heuristic.');
+    return false;
+  }
+  const tv = titles[Math.floor(Math.random() * titles.length)];
+  return tapClinicSelectionDotToRightOfTitleTextView(tv);
+}
+
+async function tapNamedClinicRowCoordinateFallback(needle) {
+  const safe = needle.replace(/"/g, '\\"');
+  const xpaths = [
+    `//*[@text="Choose your clinic"]/following-sibling::android.widget.ScrollView//android.widget.TextView[contains(@text,"${safe}")]`,
+    `//*[contains(@text,"Choose your clinic")]/following-sibling::android.widget.ScrollView//android.widget.TextView[contains(@text,"${safe}")]`,
+  ];
+  const custom = (process.env.COSMEDICS_CLINIC_SCREEN_MARKER || '').trim();
+  if (custom) {
+    const c = custom.replace(/"/g, '\\"');
+    xpaths.unshift(
+      `//*[contains(@text,"${c}")]/following-sibling::android.widget.ScrollView//android.widget.TextView[contains(@text,"${safe}")]`
+    );
+  }
+  for (const xp of xpaths) {
+    const scoped = await $(xp);
+    if (await scoped.isDisplayed().catch(() => false)) {
+      const t = ((await scoped.getText().catch(() => '')) || '').trim();
+      if (clinicRowTitleHeuristic(t)) {
+        return tapClinicSelectionDotToRightOfTitleTextView(scoped);
+      }
+    }
+  }
+  return false;
+}
+
+async function collectVisibleClinicRadios() {
+  const out = [];
+  const xpaths = [
+    '//android.widget.RadioButton',
+    '//androidx.appcompat.widget.AppCompatRadioButton',
+  ];
+  for (const xp of xpaths) {
+    const radios = await $$(xp);
+    for (let i = 0; i < radios.length; i++) {
+      const el = radios[i];
+      if (await el.isDisplayed().catch(() => false)) {
+        out.push(el);
+      }
+    }
+  }
+  return out;
+}
+
+/** Flutter / custom rows sometimes expose a checkable dot instead of RadioButton. */
+async function collectCheckableSelectionDots() {
+  const out = [];
+  const xpaths = [
+    '//*[@clickable="true" and @checkable="true"]',
+    '//*[@clickable="true" and (@checked="false" or @checked="true")]',
+  ];
+  for (const xp of xpaths) {
+    const els = await $$(xp);
+    for (let i = 0; i < els.length; i++) {
+      const el = els[i];
+      if (!(await el.isDisplayed().catch(() => false))) continue;
+      const txt = ((await el.getText().catch(() => '')) || '').trim();
+      if (/^apply$/i.test(txt)) continue;
+      const r = await safeElementRect(el);
+      if (!r || r.width > 200 || r.height > 200) continue;
+      out.push(el);
+    }
+  }
+  return out;
+}
+
+/**
+ * Small clickable controls on the right (radio circles); excludes wide rows and Apply.
+ */
+async function collectRightSideSelectionTargets() {
+  const { width: sw, height: sh } = await driver.getWindowSize();
+  const minX = Math.round(sw * CLINIC_RADIO_MIN_X_FRACTION);
+  const nodes = await $$('//*[@clickable="true"]');
+  const out = [];
+  for (let i = 0; i < nodes.length; i++) {
+    const el = nodes[i];
+    if (!(await el.isDisplayed().catch(() => false))) continue;
+    const r = await safeElementRect(el);
+    if (!r) continue;
+    if (r.x + r.width < minX) continue;
+    if (r.y < Math.round(sh * 0.18)) continue;
+    if (r.width > 160 || r.height > 160) continue;
+    if (r.width < 12 || r.height < 12) continue;
+    const txt = ((await el.getText().catch(() => '')) || '').trim();
+    if (/^apply$/i.test(txt)) continue;
+    out.push(el);
+  }
+  return out;
+}
+
+async function collectAllClinicSelectionHitTargets() {
+  const radios = await collectVisibleClinicRadios();
+  if (radios.length) return radios;
+  const dots = await collectCheckableSelectionDots();
+  if (dots.length) return dots;
+  return collectRightSideSelectionTargets();
+}
+
+/**
+ * Select the radio whose vertical center is closest to the clinic name row (name text is not tappable for selection).
+ */
+async function tapRadioOnRowContainingClinicName(needle) {
+  const nameEl = await $(`//*[contains(@text,"${needle}")]`);
+  if (!(await nameEl.isDisplayed().catch(() => false))) {
+    return false;
+  }
+  const nameRect = await safeElementRect(nameEl);
+  if (!nameRect) {
+    return false;
+  }
+  const nameMidY = nameRect.y + nameRect.height / 2;
+
+  const radios = await collectAllClinicSelectionHitTargets();
+  let best = null;
+  let bestDy = Infinity;
+  for (const r of radios) {
+    const rr = await safeElementRect(r);
+    if (!rr) continue;
+    const rMidY = rr.y + rr.height / 2;
+    const dy = Math.abs(rMidY - nameMidY);
+    if (dy < bestDy && dy < 72) {
+      bestDy = dy;
+      best = r;
+    }
+  }
+  if (best) {
+    await best.click();
+    console.log(`[SUMMARY] Tapped clinic selection control aligned with name containing: "${needle}"`);
+    return true;
+  }
+  return tapNamedClinicRowCoordinateFallback(needle);
+}
+
+async function tapRandomClinicRadio() {
+  const radios = await collectAllClinicSelectionHitTargets();
+  if (!radios.length) {
+    console.log('[SUMMARY] No native radio/checkable targets — using coordinate tap right of clinic title.');
+    return tapRandomClinicRowCoordinateFallback();
+  }
+  const idx = Math.floor(Math.random() * radios.length);
+  await radios[idx].click();
+  console.log(`[SUMMARY] Tapped random clinic selection control (index ${idx} of ${radios.length} candidate(s)).`);
+  return true;
+}
+
+async function waitClinicChooserDismissed(timeoutMs = 20000) {
+  invalidateClinicChooserPageSourceCache();
+  await driver.waitUntil(async () => !(await isClinicSelectionScreenVisible()), {
+    timeout: timeoutMs,
+    interval: 400,
+    timeoutMsg: 'Clinic chooser ("Choose your clinic") still visible after Apply.',
+  });
+}
+
+/**
+ * If the **Choose your clinic** sheet is present: tap a clinic **radio** (not the name), then **Apply**.
+ * Single-clinic accounts may never see this sheet.
+ */
+async function handleOptionalClinicSelectionAfterLogin() {
+  // Sheet usually appears within a few seconds; poll often instead of one long idle first.
+  await driver.pause(400);
+  const deadline = Date.now() + CLINIC_SCREEN_WAIT_MS;
+  let clinicSeen = false;
+  while (Date.now() < deadline) {
+    if (await isClinicSelectionScreenVisible()) {
+      clinicSeen = true;
+      break;
+    }
+    await driver.pause(200);
+  }
+
+  if (!clinicSeen) {
+    console.log(
+      '[SUMMARY] No clinic selection screen detected within wait window — treating as single-clinic or direct post-login.'
+    );
+    return { clinic: 'absent' };
+  }
+
+  await driver.pause(Math.min(POST_LOGIN_PAUSE_MS, 2000));
+  console.log('[SUMMARY] Clinic chooser visible — selecting via control on the row (not the clinic name text).');
+
+  await driver
+    .waitUntil(
+      async () =>
+        (await collectAllClinicSelectionHitTargets()).length > 0 ||
+        (await collectClinicRowTitleElementsInSheet()).length > 0,
+      {
+        timeout: 10000,
+        interval: 300,
+      }
+    )
+    .catch(() => {
+      console.log('[SUMMARY] No clinic selection control visible yet after sheet open — continuing anyway.');
+    });
+
+  const needle = (process.env.COSMEDICS_PROVIDER_CLINIC_NAME || '').trim();
+  let picked = false;
+  let usedNamedRadio = false;
+  if (needle) {
+    picked = await tapRadioOnRowContainingClinicName(needle);
+    if (picked) {
+      usedNamedRadio = true;
+    } else {
+      console.log(
+        `[SUMMARY] Could not match a radio to COSMEDICS_PROVIDER_CLINIC_NAME="${needle}" — falling back to random radio.`
+      );
+    }
+  }
+  if (!picked) {
+    picked = await tapRandomClinicRadio();
+  }
+
+  if (!picked) {
+    await dumpProviderUiArtifacts('clinic-no-hit-target');
+    throw new Error(
+      'Clinic chooser is visible but no selection control could be tapped. See artifacts/provider-clinic-no-hit-target-*.xml'
+    );
+  }
+
+  await driver.pause(400);
+  let applied = await tapClinicSheetApplyButton();
+  if (!applied) {
+    applied = !!(await tapFirstMatchingButton(['Apply', 'APPLY'], 10000));
+  }
+  if (!applied) {
+    const fallback = await tapFirstMatchingButton(['Confirm', 'Select', 'Done', 'OK', 'Continue'], 4000);
+    if (fallback) {
+      console.log(`[SUMMARY] No "Apply" button; used "${fallback}" instead.`);
+    } else {
+      throw new Error('Clinic radio tapped but no Apply/Confirm button found.');
+    }
+  } else {
+    console.log('[SUMMARY] Tapped Apply on clinic chooser.');
+  }
+
+  await waitClinicChooserDismissed();
+  return { clinic: usedNamedRadio ? 'selected_named_radio_apply' : 'selected_random_radio_apply' };
+}
+
 describe('Cosmedics - Provider access from patient Sign In', () => {
-  it('opens Provider login via Provider access below Continue', async function () {
-    this.timeout(Number(process.env.MOCHA_TIMEOUT_MS || 120000));
+  it('opens Provider login, signs in, and handles optional clinic selection', async function () {
+    this.timeout(Number(process.env.MOCHA_TIMEOUT_MS || 180000));
+
+    if (!PROVIDER_EMAIL || !PROVIDER_PASSWORD) {
+      throw new Error('Provider email/password missing (defaults should be set in spec — check env stripping).');
+    }
 
     await ensurePatientSignInScreen();
     await (await getPatientSignInTitle()).waitForDisplayed({ timeout: 15000 });
@@ -288,16 +862,13 @@ describe('Cosmedics - Provider access from patient Sign In', () => {
     await tapProviderAccess();
     await expectProviderLoginScreen();
 
-    if (PROVIDER_EMAIL && PROVIDER_PASSWORD) {
-      await fillProviderCredentials(PROVIDER_EMAIL, PROVIDER_PASSWORD);
-      await tapProviderContinue();
-      console.log(
-        '[SUMMARY] Provider credentials submitted (set assertions for post-login in a follow-up step).'
-      );
-    } else {
-      console.log(
-        '[SUMMARY] COSMEDICS_PROVIDER_EMAIL / COSMEDICS_PROVIDER_PASSWORD not set — stopped at Provider login screen.'
-      );
-    }
+    await fillProviderCredentials(PROVIDER_EMAIL, PROVIDER_PASSWORD);
+    await tapProviderContinue();
+
+    await waitLeavingProviderLoginOrClinicAppears();
+    const clinicOutcome = await handleOptionalClinicSelectionAfterLogin();
+
+    await driver.pause(1500);
+    console.log(`[SUMMARY] Provider login flow finished. Clinic handling: ${clinicOutcome.clinic}`);
   });
 });

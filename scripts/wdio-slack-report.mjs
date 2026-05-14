@@ -163,8 +163,9 @@ function getHappyFlowBullets(cmdLine, label) {
     return [
       'Open the Cosmedics app on the patient sign-in screen.',
       'Tap Provider access (below Continue).',
-      'Open the provider login screen.',
-      'If provider email and password are configured in the environment, enter them and continue.',
+      'Enter provider email and password and submit Continue.',
+      'If **Choose your clinic** appears: tap a random clinic **radio** (not the name), then tap **Apply**.',
+      'Optional COSMEDICS_PROVIDER_CLINIC_NAME selects the radio on that named row instead of random.',
     ];
   }
   if (hay.includes('cosmedics:post') || hay.includes('appium.test')) {
