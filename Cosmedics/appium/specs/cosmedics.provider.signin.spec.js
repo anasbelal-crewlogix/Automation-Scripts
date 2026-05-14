@@ -9,6 +9,7 @@ const path = require('path');
  *
  * Run:
  *   npm run wdio:android:cosmedics:provider:signin
+ *   npm run wdio:android:cosmedics:provider:profile   # profile-only (see COSMEDICS_PROVIDER_START_AT_PROFILE)
  *
  * Credentials default to the shared Mailinator test provider unless overridden:
  *   COSMEDICS_PROVIDER_EMAIL / COSMEDICS_PROVIDER_PASSWORD
@@ -17,18 +18,32 @@ const path = require('path');
  * (tapping the clinic name does not select). The script taps a **random** visible radio, then **Apply**.
  * Detection: first XPath on title text / content-desc; if that misses (some Flutter UIs), a throttled
  * `getPageSource` check for "choose your clinic" plus a bottom **Apply** and a selection control.
- * Optional: COSMEDICS_PROVIDER_CLINIC_NAME — substring of clinic name; selects the radio on that row (same Y band).
+ * After clinic Apply (or if no clinic sheet), open **Profile** from the bottom bar
+ * (Home, QR/camera, Notifications, **Profile** — far right).
  *
  * Optional UI tuning:
  *   COSMEDICS_PROVIDER_ACCESS_TEXT — link below patient Continue
  *   COSMEDICS_PROVIDER_LOGIN_MARKER — substring unique to provider login
  *   COSMEDICS_CLINIC_SCREEN_MARKER — substring on clinic sheet if title differs from defaults
  *   COSMEDICS_CLINIC_RADIO_MIN_X_FRACTION — 0–1, min X for “circle on the right” fallback (default 0.52)
- *   COSMEDICS_PROVIDER_POST_LOGIN_PAUSE_MS — max settle pause after clinic sheet appears (default 2500, capped in flow)
- *   COSMEDICS_CLINIC_SCREEN_WAIT_MS — max time to poll for clinic sheet after login (default 20000)
+ *   COSMEDICS_PROVIDER_POST_LOGIN_PAUSE_MS — brief settle after clinic sheet is detected, before tapping a row (default 400, max 2000)
+ *   COSMEDICS_PROVIDER_POST_CLINIC_LANDING_PAUSE_MS — pause on dashboard after clinic sheet dismisses, before Profile (default 800, max 2000)
+ *   COSMEDICS_CLINIC_SCREEN_WAIT_MS — max time to poll for clinic sheet after login (default 12000)
+ *
+ * **Profile-only iteration** (sign-in + clinic already verified): set
+ *   COSMEDICS_PROVIDER_START_AT_PROFILE=1
+ * The spec assumes the app is already on the provider shell (e.g. after manual login or a prior run).
+ * Optional: COSMEDICS_PROVIDER_PROFILE_ENTRY_PAUSE_MS (default 1500) — settle wait before tapping Profile.
+ * Run: `npm run wdio:android:cosmedics:provider:profile`
  */
 
 const APP_PACKAGE = 'com.cosmedicenteruser';
+
+/** When true, skip patient sign-in, provider login, and clinic handling; test only bottom-nav → Profile. */
+const START_AT_PROFILE = /^1|true|yes$/i.test(
+  String(process.env.COSMEDICS_PROVIDER_START_AT_PROFILE || '').trim()
+);
+const PROFILE_ENTRY_PAUSE_MS = Number(process.env.COSMEDICS_PROVIDER_PROFILE_ENTRY_PAUSE_MS || 1500);
 
 const DEFAULT_PROVIDER_EMAIL = 'providertwo@mailinator.com';
 const DEFAULT_PROVIDER_PASSWORD = 'Password123';
@@ -40,8 +55,11 @@ const CLINIC_RADIO_MIN_X_FRACTION = Math.min(
   0.85,
   Math.max(0.42, Number(process.env.COSMEDICS_CLINIC_RADIO_MIN_X_FRACTION || 0.52))
 );
-const CLINIC_SCREEN_WAIT_MS = Number(process.env.COSMEDICS_CLINIC_SCREEN_WAIT_MS || 20000);
-const POST_LOGIN_PAUSE_MS = Number(process.env.COSMEDICS_PROVIDER_POST_LOGIN_PAUSE_MS || 2500);
+const CLINIC_SCREEN_WAIT_MS = Number(process.env.COSMEDICS_CLINIC_SCREEN_WAIT_MS || 12000);
+/** After clinic sheet is visible: short settle before collecting hit targets (ms, capped at 2000 in flow). */
+const POST_LOGIN_PAUSE_MS = Number(process.env.COSMEDICS_PROVIDER_POST_LOGIN_PAUSE_MS || 400);
+/** After Apply dismisses the sheet: pause on landing before bottom-nav Profile (ms, hard max 2000). */
+const POST_CLINIC_LANDING_PAUSE_MS = Number(process.env.COSMEDICS_PROVIDER_POST_CLINIC_LANDING_PAUSE_MS || 800);
 
 /** Throttle: page source is heavy; used when XPath cannot see the title (e.g. some Flutter layers). */
 let clinicChooserPageSourceCache = { at: 0, text: '' };
@@ -463,7 +481,9 @@ async function isClinicSelectionScreenVisible() {
   return rowTitles.length >= 1;
 }
 
-async function waitLeavingProviderLoginOrClinicAppears(timeoutMs = 60000) {
+async function waitLeavingProviderLoginOrClinicAppears(
+  timeoutMs = Number(process.env.COSMEDICS_PROVIDER_LEAVE_LOGIN_TIMEOUT_MS || 60000)
+) {
   await driver.waitUntil(
     async () => {
       if (await isClinicSelectionScreenVisible()) {
@@ -474,7 +494,7 @@ async function waitLeavingProviderLoginOrClinicAppears(timeoutMs = 60000) {
     },
     {
       timeout: timeoutMs,
-      interval: 400,
+      interval: 150,
       timeoutMsg:
         'After provider Continue: expected clinic selection or leaving the two-field login (still on login?).',
     }
@@ -501,7 +521,7 @@ async function tapFirstMatchingButton(labels, maxWaitMs = 6000) {
         }
       }
     }
-    await driver.pause(250);
+    await driver.pause(150);
   }
   return null;
 }
@@ -753,11 +773,11 @@ async function tapRandomClinicRadio() {
   return true;
 }
 
-async function waitClinicChooserDismissed(timeoutMs = 20000) {
+async function waitClinicChooserDismissed(timeoutMs = 15000) {
   invalidateClinicChooserPageSourceCache();
   await driver.waitUntil(async () => !(await isClinicSelectionScreenVisible()), {
     timeout: timeoutMs,
-    interval: 400,
+    interval: 120,
     timeoutMsg: 'Clinic chooser ("Choose your clinic") still visible after Apply.',
   });
 }
@@ -767,8 +787,8 @@ async function waitClinicChooserDismissed(timeoutMs = 20000) {
  * Single-clinic accounts may never see this sheet.
  */
 async function handleOptionalClinicSelectionAfterLogin() {
-  // Sheet usually appears within a few seconds; poll often instead of one long idle first.
-  await driver.pause(400);
+  // Sheet usually appears within a few seconds; poll instead of one long idle first.
+  await driver.pause(120);
   const deadline = Date.now() + CLINIC_SCREEN_WAIT_MS;
   let clinicSeen = false;
   while (Date.now() < deadline) {
@@ -776,7 +796,7 @@ async function handleOptionalClinicSelectionAfterLogin() {
       clinicSeen = true;
       break;
     }
-    await driver.pause(200);
+    await driver.pause(100);
   }
 
   if (!clinicSeen) {
@@ -786,7 +806,7 @@ async function handleOptionalClinicSelectionAfterLogin() {
     return { clinic: 'absent' };
   }
 
-  await driver.pause(Math.min(POST_LOGIN_PAUSE_MS, 2000));
+  await driver.pause(Math.min(2000, Math.max(0, POST_LOGIN_PAUSE_MS)));
   console.log('[SUMMARY] Clinic chooser visible — selecting via control on the row (not the clinic name text).');
 
   await driver
@@ -795,8 +815,8 @@ async function handleOptionalClinicSelectionAfterLogin() {
         (await collectAllClinicSelectionHitTargets()).length > 0 ||
         (await collectClinicRowTitleElementsInSheet()).length > 0,
       {
-        timeout: 10000,
-        interval: 300,
+        timeout: 6000,
+        interval: 120,
       }
     )
     .catch(() => {
@@ -827,13 +847,13 @@ async function handleOptionalClinicSelectionAfterLogin() {
     );
   }
 
-  await driver.pause(400);
+  await driver.pause(180);
   let applied = await tapClinicSheetApplyButton();
   if (!applied) {
-    applied = !!(await tapFirstMatchingButton(['Apply', 'APPLY'], 10000));
+    applied = !!(await tapFirstMatchingButton(['Apply', 'APPLY'], 5000));
   }
   if (!applied) {
-    const fallback = await tapFirstMatchingButton(['Confirm', 'Select', 'Done', 'OK', 'Continue'], 4000);
+    const fallback = await tapFirstMatchingButton(['Confirm', 'Select', 'Done', 'OK', 'Continue'], 3500);
     if (fallback) {
       console.log(`[SUMMARY] No "Apply" button; used "${fallback}" instead.`);
     } else {
@@ -847,28 +867,133 @@ async function handleOptionalClinicSelectionAfterLogin() {
   return { clinic: usedNamedRadio ? 'selected_named_radio_apply' : 'selected_random_radio_apply' };
 }
 
-describe('Cosmedics - Provider access from patient Sign In', () => {
-  it('opens Provider login, signs in, and handles optional clinic selection', async function () {
-    this.timeout(Number(process.env.MOCHA_TIMEOUT_MS || 180000));
+/**
+ * Provider shell: bottom nav is Home, QR (camera), Notifications, Profile (far right).
+ * Does not require the patient Home search field — only that we are past Sign In.
+ */
+async function clickProviderBottomNavProfile() {
+  await driver.hideKeyboard().catch(() => {});
 
-    if (!PROVIDER_EMAIL || !PROVIDER_PASSWORD) {
-      throw new Error('Provider email/password missing (defaults should be set in spec — check env stripping).');
+  const tryClick = async (locator) => {
+    const el = await $(locator);
+    if (await el.isDisplayed().catch(() => false)) {
+      await el.click();
+      return true;
+    }
+    return false;
+  };
+
+  const xpaths = [
+    '//*[@content-desc="Profile"]',
+    '//*[contains(@content-desc,"Profile")]',
+    '//*[@content-desc="profile"]',
+    '//*[@text="Profile" and @clickable="true"]',
+  ];
+  for (const xp of xpaths) {
+    if (await tryClick(xp)) {
+      console.log('[SUMMARY] Tapped Profile tab (content-desc or clickable label).');
+      return;
+    }
+  }
+
+  try {
+    const ui = await $('android=new UiSelector().clickable(true).descriptionContains("Profile")');
+    if (await ui.isDisplayed().catch(() => false)) {
+      await ui.click();
+      console.log('[SUMMARY] Tapped Profile tab (UiSelector descriptionContains Profile).');
+      return;
+    }
+  } catch {
+    /* optional */
+  }
+
+  const { width, height } = await driver.getWindowSize();
+  const cx = Math.round(width * 0.88);
+  const cy = Math.round(height * 0.92);
+  console.log('[SUMMARY] Profile tab fallback: tap far-right bottom nav (fourth slot).');
+  await driver.performActions([
+    {
+      type: 'pointer',
+      id: 'providerProfileTab',
+      parameters: { pointerType: 'touch' },
+      actions: [
+        { type: 'pointerMove', duration: 0, x: cx, y: cy },
+        { type: 'pointerDown', button: 0 },
+        { type: 'pointerUp', button: 0 },
+      ],
+    },
+  ]);
+  await driver.releaseActions();
+}
+
+async function expectProviderProfileSectionOpened(timeout = 20000) {
+  await driver.waitUntil(
+    async () => {
+      if (await $('//*[@text="Edit Profile"]').isDisplayed().catch(() => false)) {
+        return true;
+      }
+      if (await $('//*[@text="Logout"]').isDisplayed().catch(() => false)) {
+        return true;
+      }
+      if (await $('//*[@text="Subscription"]').isDisplayed().catch(() => false)) {
+        return true;
+      }
+      if (await $('//*[@text="Settings"]').isDisplayed().catch(() => false)) {
+        return true;
+      }
+      if (await $('//*[@text="My Profile"]').isDisplayed().catch(() => false)) {
+        return true;
+      }
+      if (await $('//*[contains(@text,"Account")]').isDisplayed().catch(() => false)) {
+        return true;
+      }
+      return false;
+    },
+    {
+      timeout,
+      timeoutMsg:
+        'Provider Profile section not detected (expected Edit Profile, Logout, Subscription, Settings, or similar).',
+    }
+  );
+}
+
+describe('Cosmedics - Provider access from patient Sign In', () => {
+  it('opens Provider login, clinic if needed, then opens Profile from bottom nav', async function () {
+    this.timeout(Number(process.env.MOCHA_TIMEOUT_MS || 240000));
+
+    if (START_AT_PROFILE) {
+      console.log(
+        '[SUMMARY] COSMEDICS_PROVIDER_START_AT_PROFILE — skipping sign-in and clinic; assuming provider shell is visible.'
+      );
+      await driver.pause(Math.max(0, PROFILE_ENTRY_PAUSE_MS));
+    } else {
+      if (!PROVIDER_EMAIL || !PROVIDER_PASSWORD) {
+        throw new Error('Provider email/password missing (defaults should be set in spec — check env stripping).');
+      }
+
+      await ensurePatientSignInScreen();
+      await (await getPatientSignInTitle()).waitForDisplayed({ timeout: 15000 });
+      await getContinueButton();
+
+      await tapProviderAccess();
+      await expectProviderLoginScreen();
+
+      await fillProviderCredentials(PROVIDER_EMAIL, PROVIDER_PASSWORD);
+      await tapProviderContinue();
+
+      await waitLeavingProviderLoginOrClinicAppears();
+      const clinicOutcome = await handleOptionalClinicSelectionAfterLogin();
+
+      const landingMs = Math.min(2000, Math.max(0, POST_CLINIC_LANDING_PAUSE_MS));
+      await driver.pause(landingMs);
+      console.log(
+        `[SUMMARY] Provider login flow finished. Clinic handling: ${clinicOutcome.clinic} (landing pause ${landingMs}ms, max 2000ms).`
+      );
     }
 
-    await ensurePatientSignInScreen();
-    await (await getPatientSignInTitle()).waitForDisplayed({ timeout: 15000 });
-    await getContinueButton();
-
-    await tapProviderAccess();
-    await expectProviderLoginScreen();
-
-    await fillProviderCredentials(PROVIDER_EMAIL, PROVIDER_PASSWORD);
-    await tapProviderContinue();
-
-    await waitLeavingProviderLoginOrClinicAppears();
-    const clinicOutcome = await handleOptionalClinicSelectionAfterLogin();
-
-    await driver.pause(1500);
-    console.log(`[SUMMARY] Provider login flow finished. Clinic handling: ${clinicOutcome.clinic}`);
+    console.log('[SUMMARY] Bottom nav: open Profile (far right; order Home → QR → Notifications → Profile).');
+    await clickProviderBottomNavProfile();
+    await expectProviderProfileSectionOpened();
+    console.log('[SUMMARY] Provider Profile section is visible.');
   });
 });

@@ -99,6 +99,9 @@ function getReportHeading(label, cmdLine) {
   if (hay.includes('subscription') && !hay.includes('provider')) {
     return 'Cosmedics Subscription Automation Testing Report';
   }
+  if (hay.includes('provider:profile') || hay.includes('provider-profile')) {
+    return 'Cosmedics Provider Profile Automation Testing Report';
+  }
   if (hay.includes('provider')) {
     return 'Cosmedics Provider Access Automation Testing Report';
   }
@@ -159,6 +162,12 @@ function getHappyFlowBullets(cmdLine, label) {
       'When the flow finishes (after payment/QR, or if every tab’s first plan was already active), open Profile, tap Logout, confirm “Yes”, and verify Sign In is shown again.',
     ];
   }
+  if (hay.includes('provider:profile') || hay.includes('provider-profile')) {
+    return [
+      'Assumes the app is already on the **provider** shell (signed in; clinic step done if applicable).',
+      'From the bottom navigation (Home → QR/camera → Notifications → **Profile**), open **Profile** and verify profile content (e.g. Edit Profile, Logout, Subscription).',
+    ];
+  }
   if (hay.includes('provider')) {
     return [
       'Open the Cosmedics app on the patient sign-in screen.',
@@ -166,6 +175,7 @@ function getHappyFlowBullets(cmdLine, label) {
       'Enter provider email and password and submit Continue.',
       'If **Choose your clinic** appears: tap a random clinic **radio** (not the name), then tap **Apply**.',
       'Optional COSMEDICS_PROVIDER_CLINIC_NAME selects the radio on that named row instead of random.',
+      'From the bottom navigation (Home → QR/camera → Notifications → **Profile**), open **Profile** and verify profile content (e.g. Edit Profile, Logout, Subscription).',
     ];
   }
   if (hay.includes('cosmedics:post') || hay.includes('appium.test')) {
